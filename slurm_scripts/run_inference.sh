@@ -22,9 +22,9 @@ echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
 
-# Load modules
-module load conda
-module load CUDA/12.8
+# Load modules (suppress errors for non-Biowulf systems)
+module load conda 2>/dev/null || true
+module load CUDA/12.8 2>/dev/null || true
 
 # Set CUDA_HOME if not set
 if [ -z "${CUDA_HOME}" ]; then
@@ -32,7 +32,7 @@ if [ -z "${CUDA_HOME}" ]; then
 fi
 
 # Activate conda environment
-source activate prokbert
+conda activate prokbert 2>/dev/null || source activate prokbert 2>/dev/null || true
 
 # Ignore user site-packages
 export PYTHONNOUSERSITE=1

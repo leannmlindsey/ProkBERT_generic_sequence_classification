@@ -39,7 +39,7 @@ if [ -z "${CUDA_HOME}" ]; then
 fi
 
 # Activate conda environment
-source activate prokbert
+conda activate prokbert 2>/dev/null || source activate prokbert 2>/dev/null || true
 
 # Ignore user site-packages
 export PYTHONNOUSERSITE=1

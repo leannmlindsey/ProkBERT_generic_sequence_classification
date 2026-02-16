@@ -42,7 +42,7 @@ if [ -z "${CUDA_HOME}" ]; then
 fi
 
 # Activate conda environment
-source activate prokbert
+conda activate prokbert 2>/dev/null || source activate prokbert 2>/dev/null || true
 
 # Check GPU availability
 echo ""
@@ -99,7 +99,7 @@ NN_LR=${NN_LR:-0.001}
 INCLUDE_RANDOM_BASELINE=${INCLUDE_RANDOM_BASELINE:-false}
 
 # Set output directory
-OUTPUT_DIR=${OUTPUT_DIR:-./results/embedding_analysis/$(basename ${CSV_DIR})}
+OUTPUT_DIR=${OUTPUT_DIR:-./results/embedding_analysis/$(basename "${CSV_DIR}")}
 mkdir -p "${OUTPUT_DIR}"
 
 echo ""
