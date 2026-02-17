@@ -124,12 +124,12 @@ def prepare_dataframe_from_dataset(dataset_split, max_length=1024, preserve_meta
     if 'sequence' in df.columns and 'segment' not in df.columns:
         df['segment'] = df['sequence']
 
-    # Create segment_id as a unique identifier
+    # Create segment_id as a unique identifier per row.
+    # IMPORTANT: segment_ids MUST be unique because the tokenization pipeline
+    # stores results in a dict keyed by segment_id — duplicate IDs cause
+    # sequences to be silently overwritten.
     if 'segment_id' not in df.columns:
-        if 'seq_id' in df.columns:
-            df['segment_id'] = df['seq_id'].astype(str)
-        else:
-            df['segment_id'] = [f"seq_{i}" for i in range(len(df))]
+        df['segment_id'] = [f"seg_{i}" for i in range(len(df))]
 
     # Create 'y' column (same as label for binary classification)
     if 'label' in df.columns and 'y' not in df.columns:
@@ -434,6 +434,17 @@ def main():
     print(f"   X_test shape: {X_test.shape}")
     print(f"   y_test shape: {y_test.shape}")
     print(f"   torchdb_test size: {len(torchdb_test)}")
+
+    # Validate token IDs against model vocabulary size
+    max_token_id = int(X_test.max())
+    vocab_size = model.config.vocab_size
+    print(f"   Model vocab_size: {vocab_size}")
+    print(f"   Max token ID in data: {max_token_id}")
+    if max_token_id >= vocab_size:
+        print(f"\n   ERROR: Token ID {max_token_id} exceeds model vocab_size {vocab_size}!")
+        print(f"   This means the tokenizer (kmer={tokenization_params['kmer']}, shift={tokenization_params['shift']}) "
+              f"does not match the model.")
+        sys.exit(1)
 
     # Ensure X and y have the same first dimension
     if X_test.shape[0] != y_test.shape[0]:

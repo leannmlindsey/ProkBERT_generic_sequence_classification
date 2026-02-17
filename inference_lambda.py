@@ -74,12 +74,12 @@ def prepare_dataframe_from_dataset(dataset_split, max_length=1024, preserve_meta
     if 'sequence' in df.columns and 'segment' not in df.columns:
         df['segment'] = df['sequence']
     
-    # Create segment_id as a unique identifier (use seq_id if available, otherwise generate)
+    # Create segment_id as a unique identifier per row.
+    # IMPORTANT: segment_ids MUST be unique because the tokenization pipeline
+    # stores results in a dict keyed by segment_id — duplicate IDs cause
+    # sequences to be silently overwritten.
     if 'segment_id' not in df.columns:
-        if 'seq_id' in df.columns:
-            df['segment_id'] = df['seq_id'].astype(str)
-        else:
-            df['segment_id'] = [f"seq_{i}" for i in range(len(df))]
+        df['segment_id'] = [f"seg_{i}" for i in range(len(df))]
     
     # Create 'y' column (same as label for binary classification)
     if 'label' in df.columns and 'y' not in df.columns:
@@ -360,13 +360,22 @@ def main():
 
         model = model.to(device)
         model.eval()
-        print("   Model loaded successfully!")
+        print(f"   Model class: {model.__class__.__name__}")
+        print(f"   Model loaded successfully!")
+
+        # Verify fine-tuned weights are loaded (classifier should not be near-zero)
+        if hasattr(model, 'classifier'):
+            cls_std = model.classifier.weight.data.std().item()
+            print(f"   Classifier weight std: {cls_std:.6f} (should be >> 0 if fine-tuned)")
+        if hasattr(model, 'weighting_layer'):
+            wl_std = model.weighting_layer.weight.data.std().item()
+            print(f"   Weighting layer std:   {wl_std:.6f}")
     except Exception as e:
         print(f"Error loading model: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
-    
+
     # Load dataset
     print(f"\n3. Loading dataset...")
     test_df = load_inference_dataset(args)
@@ -395,6 +404,17 @@ def main():
     print(f"   X_test shape: {X_test.shape}")
     print(f"   y_test shape: {y_test.shape}")
     print(f"   torchdb_test size: {len(torchdb_test)}")
+
+    # Validate token IDs against model vocabulary size
+    max_token_id = int(X_test.max())
+    vocab_size = model.config.vocab_size
+    print(f"   Model vocab_size: {vocab_size}")
+    print(f"   Max token ID in data: {max_token_id}")
+    if max_token_id >= vocab_size:
+        print(f"\n   ERROR: Token ID {max_token_id} exceeds model vocab_size {vocab_size}!")
+        print(f"   This means the tokenizer (--base_model={args.base_model}) does not match the checkpoint.")
+        print(f"   The checkpoint may have been fine-tuned from a different base model.")
+        sys.exit(1)
     
     # Ensure X and y have the same first dimension
     if X_test.shape[0] != y_test.shape[0]:

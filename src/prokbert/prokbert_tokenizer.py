@@ -198,6 +198,16 @@ class ProkBERTTokenizer(PreTrainedTokenizer):
         self.special_tokens = list(self.special_tokens_map.values())      
         
 
+    @property
+    def vocab_size(self) -> int:
+        """
+        Returns the size of the tokenizer's vocabulary.
+
+        :return: The number of tokens in the vocabulary.
+        :rtype: int
+        """
+        return len(self.vocab)
+
     def __len__(self) -> int:
         """
         Returns the length of the tokenizer's vocabulary.

@@ -254,9 +254,8 @@ class ProkBERTTrainingDatasetPT(Dataset):
             
         }
         if self.AddAttentionMask:
-            attention_mask = (self.input_ids[idx] > 3) |  (self.input_ids[idx] == 2) | (self.input_ids[idx] == 1)
-            attention_mask = attention_mask.float()
-            #sample['attention_mask'] = (self.input_ids[idx] != 0).float()
+            input_ids = self.input_ids[idx]
+            attention_mask = ((input_ids > 3) | (input_ids == 2) | (input_ids == 1)).float()
             sample['attention_mask'] = attention_mask
 
         # Include attention_mask in the sample if it is provided
