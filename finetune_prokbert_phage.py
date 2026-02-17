@@ -34,6 +34,49 @@ from sklearn.metrics import (
     roc_auc_score,
     confusion_matrix
 )
+from prokbert.prokbert_tokenizer import ProkBERTTokenizer
+
+# Fallback tokenization parameters for ProkBERT models when AutoTokenizer fails
+# (e.g. prokbert-mini-long has a broken tokenizer_config.json on HuggingFace)
+PROKBERT_TOKENIZATION_PARAMS = {
+    'prokbert-mini': {'kmer': 6, 'shift': 1},
+    'prokbert-mini-long': {'kmer': 6, 'shift': 2},
+    'prokbert-mini-c': {'kmer': 1, 'shift': 1},
+}
+
+
+def get_prokbert_tokenizer(model_name):
+    """
+    Load tokenizer using AutoTokenizer (as recommended by ProkBERT repo).
+    Falls back to ProkBERTTokenizer if AutoTokenizer fails (e.g. broken JSON
+    in prokbert-mini-long's tokenizer_config.json on HuggingFace).
+    """
+    import re
+
+    # Try AutoTokenizer first (official approach)
+    try:
+        return AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    except Exception as e:
+        print(f"  AutoTokenizer failed: {e}")
+        print(f"  Falling back to ProkBERTTokenizer...")
+
+    # Fallback: create ProkBERTTokenizer directly
+    normalized = model_name.replace('neuralbioinfo/', '')
+
+    if normalized in PROKBERT_TOKENIZATION_PARAMS:
+        params = PROKBERT_TOKENIZATION_PARAMS[normalized]
+    else:
+        match = re.search(r'k(\d+)s(\d+)', normalized)
+        if match:
+            kmer, shift = map(int, match.groups())
+            params = {'kmer': kmer, 'shift': shift}
+        else:
+            raise ValueError(
+                f"AutoTokenizer failed and cannot determine tokenization params "
+                f"for model '{model_name}'. Provide a known ProkBERT model name."
+            )
+
+    return ProkBERTTokenizer(tokenization_params=params, operation_space='sequence')
 
 
 def parse_args():
@@ -236,21 +279,50 @@ def compute_metrics(eval_pred):
 
 def preprocess_function(examples, tokenizer, max_length):
     """
-    Tokenize sequences for ProkBERT
+    Tokenize sequences for ProkBERT.
+    Uses ProkBERTTokenizer's encode_plus with manual truncation/padding,
+    since it doesn't support standard HuggingFace truncation/padding kwargs.
+    Falls back to standard __call__ for non-ProkBERT tokenizers.
     """
-    # Tokenize sequences
-    tokenized = tokenizer(
-        examples["sequence"],
-        truncation=True,
-        padding="max_length",
-        max_length=max_length,
-        return_tensors=None  # Return lists for datasets
-    )
-    
-    # Add labels
-    tokenized["labels"] = examples["label"]
-    
-    return tokenized
+    if isinstance(tokenizer, ProkBERTTokenizer):
+        all_input_ids = []
+        all_attention_masks = []
+
+        for seq in examples["sequence"]:
+            encoded = tokenizer.encode_plus(seq)
+            input_ids = list(encoded["input_ids"])
+            attention_mask = list(encoded["attention_mask"])
+
+            # Truncate: keep [CLS] at start, truncate middle, keep [SEP] at end
+            if len(input_ids) > max_length:
+                input_ids = input_ids[:max_length - 1] + [input_ids[-1]]
+                attention_mask = attention_mask[:max_length - 1] + [attention_mask[-1]]
+
+            # Pad to max_length
+            pad_len = max_length - len(input_ids)
+            if pad_len > 0:
+                input_ids = input_ids + [0] * pad_len
+                attention_mask = attention_mask + [0] * pad_len
+
+            all_input_ids.append(input_ids)
+            all_attention_masks.append(attention_mask)
+
+        return {
+            "input_ids": all_input_ids,
+            "attention_mask": all_attention_masks,
+            "labels": examples["label"],
+        }
+    else:
+        # Standard HuggingFace tokenizer path
+        tokenized = tokenizer(
+            examples["sequence"],
+            truncation=True,
+            padding="max_length",
+            max_length=max_length,
+            return_tensors=None,
+        )
+        tokenized["labels"] = examples["label"]
+        return tokenized
 
 def main():
     args = parse_args()
@@ -266,11 +338,10 @@ def main():
         print(f"Number of GPUs: {torch.cuda.device_count()}")
     
     # Load tokenizer
+    # Use ProkBERTTokenizer for ProkBERT models (avoids broken tokenizer_config.json
+    # on HuggingFace for some variants like prokbert-mini-long)
     print(f"\nLoading tokenizer from {args.model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name,
-        trust_remote_code=True
-    )
+    tokenizer = get_prokbert_tokenizer(args.model_name)
     
     # Load dataset
     if args.dataset_dir is not None:
