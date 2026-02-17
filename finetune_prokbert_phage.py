@@ -47,36 +47,38 @@ PROKBERT_TOKENIZATION_PARAMS = {
 
 def get_prokbert_tokenizer(model_name):
     """
-    Load tokenizer using AutoTokenizer (as recommended by ProkBERT repo).
-    Falls back to ProkBERTTokenizer if AutoTokenizer fails (e.g. broken JSON
-    in prokbert-mini-long's tokenizer_config.json on HuggingFace).
+    Load tokenizer for ProkBERT models.
+    Uses ProkBERTTokenizer directly for known models (avoids broken vocab_size
+    in HuggingFace remote tokenizer classes that causes save_pretrained to fail).
+    Falls back to AutoTokenizer for unknown models.
     """
     import re
 
-    # Try AutoTokenizer first (official approach)
+    normalized = model_name.replace('neuralbioinfo/', '')
+
+    # For known ProkBERT models, use ProkBERTTokenizer directly
+    # (AutoTokenizer may return a remote class with broken vocab_size property)
+    if normalized in PROKBERT_TOKENIZATION_PARAMS:
+        params = PROKBERT_TOKENIZATION_PARAMS[normalized]
+        print(f"  Using ProkBERTTokenizer with params: {params}")
+        return ProkBERTTokenizer(tokenization_params=params, operation_space='sequence')
+
+    # Try to extract params from model name pattern (e.g. k6s2)
+    match = re.search(r'k(\d+)s(\d+)', normalized)
+    if match:
+        kmer, shift = map(int, match.groups())
+        params = {'kmer': kmer, 'shift': shift}
+        print(f"  Using ProkBERTTokenizer with params: {params}")
+        return ProkBERTTokenizer(tokenization_params=params, operation_space='sequence')
+
+    # Unknown model — try AutoTokenizer
     try:
         return AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     except Exception as e:
-        print(f"  AutoTokenizer failed: {e}")
-        print(f"  Falling back to ProkBERTTokenizer...")
-
-    # Fallback: create ProkBERTTokenizer directly
-    normalized = model_name.replace('neuralbioinfo/', '')
-
-    if normalized in PROKBERT_TOKENIZATION_PARAMS:
-        params = PROKBERT_TOKENIZATION_PARAMS[normalized]
-    else:
-        match = re.search(r'k(\d+)s(\d+)', normalized)
-        if match:
-            kmer, shift = map(int, match.groups())
-            params = {'kmer': kmer, 'shift': shift}
-        else:
-            raise ValueError(
-                f"AutoTokenizer failed and cannot determine tokenization params "
-                f"for model '{model_name}'. Provide a known ProkBERT model name."
-            )
-
-    return ProkBERTTokenizer(tokenization_params=params, operation_space='sequence')
+        raise ValueError(
+            f"AutoTokenizer failed for '{model_name}': {e}. "
+            f"Add this model to PROKBERT_TOKENIZATION_PARAMS or provide a known ProkBERT model name."
+        )
 
 
 def parse_args():
@@ -513,7 +515,12 @@ def main():
     # Save final model
     print("\nSaving final model...")
     trainer.save_model()
-    tokenizer.save_pretrained(args.output_dir)
+    try:
+        tokenizer.save_pretrained(args.output_dir)
+    except NotImplementedError:
+        print("  tokenizer.save_pretrained() failed (vocab_size not implemented).")
+        print("  Saving vocabulary file directly...")
+        tokenizer.save_vocabulary(args.output_dir)
     
     # Training metrics
     print("\n" + "="*80)
