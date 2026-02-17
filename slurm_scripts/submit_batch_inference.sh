@@ -18,6 +18,7 @@ set -e
 # Default values
 BATCH_SIZE=32
 MAX_LENGTH=1024
+BASE_MODEL="neuralbioinfo/prokbert-mini"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -42,6 +43,10 @@ while [[ $# -gt 0 ]]; do
             MAX_LENGTH="$2"
             shift 2
             ;;
+        --base_model)
+            BASE_MODEL="$2"
+            shift 2
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -53,6 +58,7 @@ while [[ $# -gt 0 ]]; do
             echo "Optional arguments:"
             echo "  --batch_size N       Batch size for inference (default: 32)"
             echo "  --max_length N       Maximum sequence length (default: 1024)"
+            echo "  --base_model MODEL   Base model for tokenizer (default: neuralbioinfo/prokbert-mini)"
             echo "  --help               Show this help message"
             exit 0
             ;;
@@ -119,6 +125,7 @@ echo "============================================================"
 echo "Input list:    ${INPUT_LIST}"
 echo "Output dir:    ${OUTPUT_DIR}"
 echo "Model path:    ${MODEL_PATH}"
+echo "Base model:    ${BASE_MODEL}"
 echo "Batch size:    ${BATCH_SIZE}"
 echo "Max length:    ${MAX_LENGTH}"
 echo "============================================================"
@@ -161,7 +168,7 @@ while IFS= read -r INPUT_CSV || [ -n "${INPUT_CSV}" ]; do
         --job-name="pinf_${INPUT_BASENAME}" \
         --output="${OUTPUT_DIR}/slurm_${INPUT_BASENAME}_%j.out" \
         --error="${OUTPUT_DIR}/slurm_${INPUT_BASENAME}_%j.err" \
-        --export=ALL,INPUT_CSV="${INPUT_CSV}",OUTPUT_CSV="${OUTPUT_CSV}",MODEL_PATH="${MODEL_PATH}",BATCH_SIZE="${BATCH_SIZE}",MAX_LENGTH="${MAX_LENGTH}" \
+        --export=ALL,INPUT_CSV="${INPUT_CSV}",OUTPUT_CSV="${OUTPUT_CSV}",MODEL_PATH="${MODEL_PATH}",BASE_MODEL="${BASE_MODEL}",BATCH_SIZE="${BATCH_SIZE}",MAX_LENGTH="${MAX_LENGTH}" \
         "${INFERENCE_SCRIPT}" | awk '{print $NF}')
 
     echo "  Job ID: ${JOB_ID}"

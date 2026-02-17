@@ -46,6 +46,7 @@ echo ""
 # Set defaults
 BATCH_SIZE=${BATCH_SIZE:-32}
 MAX_LENGTH=${MAX_LENGTH:-1024}
+BASE_MODEL=${BASE_MODEL:-neuralbioinfo/prokbert-mini}
 
 # Validate required parameters
 if [ -z "${INPUT_CSV}" ]; then
@@ -78,6 +79,7 @@ echo "============================================================"
 echo "Configuration:"
 echo "============================================================"
 echo "  Model: ${MODEL_PATH}"
+echo "  Base model: ${BASE_MODEL}"
 echo "  Input CSV: ${INPUT_CSV}"
 echo "  Output CSV: ${OUTPUT_CSV}"
 echo "  Batch size: ${BATCH_SIZE}"
@@ -88,6 +90,7 @@ echo ""
 # Run inference using the existing inference_lambda.py script
 python inference_lambda.py \
     --checkpoint_path="${MODEL_PATH}" \
+    --base_model="${BASE_MODEL}" \
     --dataset_file="${INPUT_CSV}" \
     --batch_size=${BATCH_SIZE} \
     --max_length=${MAX_LENGTH} \

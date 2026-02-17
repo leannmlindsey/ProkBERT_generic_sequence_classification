@@ -36,6 +36,10 @@ BATCH_SIZE="32"
 # Maximum sequence length (default: 1024 for prokbert-mini)
 MAX_LENGTH="1024"
 
+# Base model the checkpoint was fine-tuned from
+# Options: neuralbioinfo/prokbert-mini, neuralbioinfo/prokbert-mini-long, neuralbioinfo/prokbert-mini-c
+BASE_MODEL="neuralbioinfo/prokbert-mini"
+
 #####################################################################
 # END CONFIGURATION
 #####################################################################
@@ -90,6 +94,7 @@ echo "Output dir: ${OUTPUT_DIR}"
 echo ""
 echo "Model Configuration:"
 echo "  Checkpoint: ${MODEL_PATH}"
+echo "  Base model: ${BASE_MODEL}"
 echo ""
 echo "Inference Parameters:"
 echo "  Batch size: ${BATCH_SIZE}"
@@ -102,4 +107,5 @@ echo "=========================================="
     --output_dir "${OUTPUT_DIR}" \
     --model_path "${MODEL_PATH}" \
     --batch_size "${BATCH_SIZE}" \
-    --max_length "${MAX_LENGTH}"
+    --max_length "${MAX_LENGTH}" \
+    --base_model "${BASE_MODEL}"

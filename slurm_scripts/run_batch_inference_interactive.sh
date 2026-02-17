@@ -100,6 +100,7 @@ mkdir -p "${OUTPUT_DIR}"
 # Set defaults
 BATCH_SIZE=${BATCH_SIZE:-32}
 MAX_LENGTH=${MAX_LENGTH:-1024}
+BASE_MODEL=${BASE_MODEL:-neuralbioinfo/prokbert-mini}
 
 echo ""
 echo "============================================================"
@@ -108,6 +109,7 @@ echo "============================================================"
 echo "  Input list: ${INPUT_LIST}"
 echo "  Output dir: ${OUTPUT_DIR}"
 echo "  Model path: ${MODEL_PATH}"
+echo "  Base model: ${BASE_MODEL}"
 echo "  Batch size: ${BATCH_SIZE}"
 echo "  Max length: ${MAX_LENGTH}"
 echo "============================================================"
@@ -147,6 +149,7 @@ while IFS= read -r INPUT_CSV || [ -n "${INPUT_CSV}" ]; do
 
     python inference_lambda.py \
         --checkpoint_path="${MODEL_PATH}" \
+        --base_model="${BASE_MODEL}" \
         --dataset_file="${INPUT_CSV}" \
         --batch_size=${BATCH_SIZE} \
         --max_length=${MAX_LENGTH} \
