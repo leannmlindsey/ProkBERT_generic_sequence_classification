@@ -230,29 +230,64 @@ Parameters:
 
 ### 1. Embedding Analysis
 
-Extracts embeddings from a ProkBERT model and evaluates them with a linear probe (logistic regression) and a 3-layer neural network. Also computes silhouette scores and PCA visualizations.
+Extracts embeddings from a pre-trained ProkBERT model and evaluates them using:
+- Linear probe (logistic regression)
+- 3-layer neural network
+- Silhouette score (embedding quality)
+- PCA visualization
 
 **Input:** A directory containing `train.csv`, `dev.csv` (or `val.csv`), and `test.csv`. Each CSV must have `sequence` and `label` columns.
 
-**Basic usage:**
+#### Running directly with Python
 
 ```bash
 python embedding_analysis_prokbert.py \
   --csv_dir /path/to/csv_data \
-  --model_path neuralbioinfo/prokbert-mini
+  --model_path neuralbioinfo/prokbert-mini \
+  --max_length 1024
 ```
 
-**With a different model:**
+#### Running all 3 models
 
 ```bash
+# prokbert-mini (kmer=6, shift=1, max 1024 tokens)
 python embedding_analysis_prokbert.py \
   --csv_dir /path/to/csv_data \
-  --model_path neuralbioinfo/prokbert-mini-long
+  --model_path neuralbioinfo/prokbert-mini \
+  --max_length 1024
+
+# prokbert-mini-c (kmer=1, shift=1, max 2048 tokens)
+python embedding_analysis_prokbert.py \
+  --csv_dir /path/to/csv_data \
+  --model_path neuralbioinfo/prokbert-mini-c \
+  --max_length 2048
+
+# prokbert-mini-long (kmer=6, shift=2, max 2048 tokens)
+python embedding_analysis_prokbert.py \
+  --csv_dir /path/to/csv_data \
+  --model_path neuralbioinfo/prokbert-mini-long \
+  --max_length 2048
 ```
 
-Results are saved to `./results/embedding_analysis/<model_name>/`. If embeddings have already been extracted (the `.npz` file exists in the output directory), they are loaded from cache and extraction is skipped.
+Results are saved to `./results/embedding_analysis/<model_name>/` including metrics JSON, embeddings `.npz`, PCA plots, and trained classifiers. If embeddings have already been extracted (the `.npz` file exists), they are loaded from cache and extraction is skipped.
 
-**All options:**
+#### Running on HPC with SLURM
+
+Three scripts are provided in `slurm_scripts/`:
+
+1. **`wrapper_run_embedding_analysis.sh`** — Edit the configuration section (`CSV_DIR`, `MODEL_PATH`, etc.) then run:
+   ```bash
+   bash slurm_scripts/wrapper_run_embedding_analysis.sh
+   ```
+   This submits an SBATCH job requesting 1 A100 GPU, 64 GB memory, 4 hours.
+
+2. **`run_embedding_analysis_interactive.sh`** — For interactive GPU sessions (e.g. `sinteractive --gres=gpu:1`), runs directly on the current node:
+   ```bash
+   bash slurm_scripts/run_embedding_analysis_interactive.sh
+   ```
+   Sources configuration from the wrapper script automatically.
+
+#### All options
 
 | Argument | Default | Description |
 | -------- | ------- | ----------- |
@@ -270,80 +305,136 @@ Results are saved to `./results/embedding_analysis/<model_name>/`. If embeddings
 
 ### 2. Fine-tuning
 
-Fine-tunes a ProkBERT model for binary classification. The dataset is loaded from HuggingFace. The max sequence length is automatically derived from the model config.
+Fine-tunes a ProkBERT model for binary classification on a CSV dataset. Supports early stopping, mixed-precision training, and multiple replicates with different seeds.
 
-**Basic usage:**
+**Input:** A directory containing `train.csv`, `dev.csv` (or `val.csv`), and `test.csv`. Each CSV must have `sequence` and `label` columns.
+
+#### Running directly with Python
 
 ```bash
-python finetuning_lambda.py \
+python finetune_prokbert_phage.py \
+  --dataset_dir /path/to/csv_data \
   --model_name neuralbioinfo/prokbert-mini \
-  --ftmodel my_finetuned_model \
-  --model_outputpath ./finetuning_outputs \
-  --num_train_epochs 4 \
-  --per_device_train_batch_size 128
+  --max_length 1024 \
+  --output_dir ./results/csv_binary/my_dataset \
+  --num_train_epochs 3 \
+  --learning_rate 1e-4 \
+  --per_device_train_batch_size 32 \
+  --early_stopping_patience 3 \
+  --fp16
 ```
 
-**With a different model:**
+#### Running all 3 models
 
 ```bash
-python finetuning_lambda.py \
+# prokbert-mini (kmer=6, shift=1, max 1024 tokens)
+python finetune_prokbert_phage.py \
+  --dataset_dir /path/to/csv_data \
+  --model_name neuralbioinfo/prokbert-mini \
+  --max_length 1024 \
+  --output_dir ./results/csv_binary/my_dataset/prokbert-mini \
+  --fp16
+
+# prokbert-mini-c (kmer=1, shift=1, max 2048 tokens)
+python finetune_prokbert_phage.py \
+  --dataset_dir /path/to/csv_data \
   --model_name neuralbioinfo/prokbert-mini-c \
-  --ftmodel my_finetuned_model \
-  --model_outputpath ./finetuning_outputs \
-  --num_train_epochs 4 \
-  --per_device_train_batch_size 128
+  --max_length 2048 \
+  --output_dir ./results/csv_binary/my_dataset/prokbert-mini-c \
+  --fp16
+
+# prokbert-mini-long (kmer=6, shift=2, max 2048 tokens)
+python finetune_prokbert_phage.py \
+  --dataset_dir /path/to/csv_data \
+  --model_name neuralbioinfo/prokbert-mini-long \
+  --max_length 2048 \
+  --output_dir ./results/csv_binary/my_dataset/prokbert-mini-long \
+  --fp16
 ```
 
-The fine-tuned model is saved to `<model_outputpath>/<model_name>/<ftmodel>/`.
+Results are saved to the specified `--output_dir`, organized as `./results/csv_binary/<dataset_name>/lr-<lr>_batch-<batch>/seed-<seed>/` when using the SLURM scripts.
 
-**Key arguments:**
+#### Running on HPC with SLURM
 
-| Argument | Description |
-| -------- | ----------- |
-| `--model_name` | HuggingFace model name (e.g., `neuralbioinfo/prokbert-mini-long`) |
-| `--ftmodel` | Name for the fine-tuned model output |
-| `--model_outputpath` | Base directory for saving the fine-tuned model |
-| `--num_train_epochs` | Number of training epochs |
-| `--per_device_train_batch_size` | Batch size per GPU |
-| `--learning_rate` | Learning rate (default: 0.0005) |
-| `--output_dir` | Directory for training logs and checkpoints |
+Three scripts are provided in `slurm_scripts/`:
+
+1. **`wrapper_run_prokbert_csv.sh`** — Edit the configuration section (`CSV_DIR`, `MODEL_NAME`, `DATASET_NAME`, etc.) then run:
+   ```bash
+   bash slurm_scripts/wrapper_run_prokbert_csv.sh
+   ```
+   This submits an SBATCH job requesting 1 A100 GPU, 32 GB memory, 24 hours. Set `NUM_REPLICATES` to run multiple seeds (1, 2, 3, ...) as separate jobs.
+
+2. **`run_prokbert_csv_interactive.sh`** — For interactive GPU sessions (e.g. `sinteractive --gres=gpu:1`), runs directly on the current node:
+   ```bash
+   bash slurm_scripts/run_prokbert_csv_interactive.sh
+   ```
+   Sources configuration from the wrapper script automatically. Runs all replicates sequentially.
+
+#### All options
+
+| Argument | Default | Description |
+| -------- | ------- | ----------- |
+| `--dataset_dir` | None | Directory containing train/dev/test CSV files (overrides `--dataset_name`) |
+| `--model_name` | `neuralbioinfo/prokbert-mini` | HuggingFace model name or local path |
+| `--max_length` | 1024 | Max sequence length in base pairs (1024 for mini, 2048 for mini-c/mini-long) |
+| `--output_dir` | `./prokbert_phage_finetuned` | Output directory for model checkpoints and results |
+| `--num_train_epochs` | 3 | Number of training epochs |
+| `--per_device_train_batch_size` | 32 | Batch size per GPU for training |
+| `--per_device_eval_batch_size` | 64 | Batch size per GPU for evaluation |
+| `--learning_rate` | 1e-4 | Learning rate |
+| `--weight_decay` | 0.01 | Weight decay |
+| `--warmup_ratio` | 0.1 | Warmup ratio for learning rate scheduler |
+| `--gradient_accumulation_steps` | 1 | Gradient accumulation steps |
+| `--seed` | 42 | Random seed |
+| `--fp16` | off | Use mixed-precision training |
+| `--early_stopping_patience` | 3 | Early stopping patience (epochs without improvement) |
+| `--save_total_limit` | 2 | Maximum number of checkpoints to keep |
+| `--eval_strategy` | `epoch` | Evaluation strategy: `no`, `steps`, or `epoch` |
+| `--save_strategy` | `epoch` | Save strategy: `no`, `steps`, or `epoch` |
+| `--logging_steps` | 100 | Log every N update steps |
+| `--metric_for_best_model` | `eval_mcc` | Metric for selecting best model |
+| `--random_init` | off | Use random initialization instead of pre-trained weights |
 
 ### 3. Inference
 
-Runs inference on a dataset using a fine-tuned checkpoint. You must specify `--base_model` to match the model variant used during fine-tuning.
+Two inference scripts are provided, depending on the model source:
+- **`inference_lambda.py`** — for local fine-tuned checkpoints (produced by step 2)
+- **`inference_hf.py`** — for models hosted on HuggingFace Hub (e.g. `neuralbioinfo/prokbert-mini-c-phage`)
 
-**Basic usage (HuggingFace dataset):**
+**Input:** A CSV file with a `sequence` column (and optionally `label` for evaluation).
+
+Both scripts support batch inference over multiple CSV files using the SLURM scripts described below.
+
+#### 3a. Inference with a local checkpoint
+
+Use `inference_lambda.py` when you have a fine-tuned checkpoint on disk. You must specify `--base_model` to match the model variant used during fine-tuning.
 
 ```bash
 python inference_lambda.py \
-  --checkpoint_path ./finetuning_outputs/prokbert-mini/my_finetuned_model \
+  --checkpoint_path ./results/csv_binary/my_dataset/prokbert-mini/best_model \
   --base_model neuralbioinfo/prokbert-mini \
-  --dataset leannmlindsey/lambda \
-  --split test
+  --dataset_file /path/to/test.csv \
+  --max_length 1024 \
+  --save_metrics
 ```
 
-**With a different model:**
+**Running on HPC with SLURM** — scripts in `slurm_scripts/`:
 
-```bash
-python inference_lambda.py \
-  --checkpoint_path ./finetuning_outputs/prokbert-mini-c/my_finetuned_model \
-  --base_model neuralbioinfo/prokbert-mini-c \
-  --dataset leannmlindsey/lambda \
-  --split test
-```
+1. **`wrapper_run_batch_inference.sh`** — Edit the configuration section (`INPUT_LIST`, `OUTPUT_DIR`, `MODEL_PATH`, `BASE_MODEL`, etc.) then run:
+   ```bash
+   bash slurm_scripts/wrapper_run_batch_inference.sh
+   ```
+   `INPUT_LIST` is a text file with one CSV path per line. One SLURM job (1 A100 GPU, 32 GB, 2 hours) is submitted per input file.
 
-**Using a local CSV file:**
+2. **`run_batch_inference_interactive.sh`** — For interactive GPU sessions, processes all files sequentially:
+   ```bash
+   bash slurm_scripts/run_batch_inference_interactive.sh
+   ```
+   Sources configuration from the wrapper script automatically.
 
-```bash
-python inference_lambda.py \
-  --checkpoint_path ./finetuning_outputs/prokbert-mini/my_finetuned_model \
-  --base_model neuralbioinfo/prokbert-mini \
-  --dataset_file /path/to/test.csv
-```
+Predictions are saved as `<input_basename>_predictions.csv` in the output directory.
 
-Results are saved to `<output_dir>/<model_name>/`.
-
-**All options:**
+**All options (`inference_lambda.py`):**
 
 | Argument | Default | Description |
 | -------- | ------- | ----------- |
@@ -353,8 +444,52 @@ Results are saved to `<output_dir>/<model_name>/`.
 | `--dataset_file` | none | Local CSV/TSV file (overrides `--dataset`) |
 | `--split` | `test` | Dataset split to use |
 | `--batch_size` | 32 | Batch size for inference |
-| `--max_length` | 1024 | Max sequence length (clamped to model max if exceeded) |
-| `--output_dir` | `inference_results` | Base output directory (model name appended automatically) |
+| `--max_length` | 1024 | Max sequence length |
+| `--output_dir` | `inference_results` | Directory to save results |
+| `--output_file` | auto | Output filename |
+| `--no_labels` | off | Run without labels (prediction only) |
+| `--save_metrics` | off | Save metrics to a JSON file |
+| `--device` | auto | Force `cuda` or `cpu` |
+
+#### 3b. Inference with a HuggingFace model
+
+Use `inference_hf.py` when using a pre-fine-tuned model hosted on HuggingFace Hub. The model is downloaded automatically.
+
+```bash
+python inference_hf.py \
+  --model_name neuralbioinfo/prokbert-mini-c-phage \
+  --dataset_file /path/to/test.csv \
+  --max_length 1024 \
+  --save_metrics
+```
+
+**Running on HPC with SLURM** — scripts in `slurm_scripts/`:
+
+1. **`wrapper_run_batch_inference_hf.sh`** — Edit the configuration section (`INPUT_LIST`, `OUTPUT_DIR`, `MODEL_NAME`, etc.) then run:
+   ```bash
+   bash slurm_scripts/wrapper_run_batch_inference_hf.sh
+   ```
+   Same batch pattern as above: one SLURM job per input CSV file.
+
+2. **`run_batch_inference_interactive_hf.sh`** — For interactive GPU sessions, processes all files sequentially:
+   ```bash
+   bash slurm_scripts/run_batch_inference_interactive_hf.sh
+   ```
+   Sources configuration from the wrapper script automatically.
+
+**All options (`inference_hf.py`):**
+
+| Argument | Default | Description |
+| -------- | ------- | ----------- |
+| `--model_name` | `neuralbioinfo/prokbert-mini-c-phage` | HuggingFace model name |
+| `--kmer` | auto | K-mer size for tokenizer (auto-detected from model name) |
+| `--shift` | auto | Shift size for tokenizer (auto-detected from model name) |
+| `--dataset` | none | HuggingFace dataset name or path |
+| `--dataset_file` | none | Local CSV/TSV file (overrides `--dataset`) |
+| `--split` | `test` | Dataset split to use |
+| `--batch_size` | 32 | Batch size for inference |
+| `--max_length` | 1024 | Max sequence length |
+| `--output_dir` | `inference_results` | Directory to save results |
 | `--output_file` | auto | Output filename |
 | `--no_labels` | off | Run without labels (prediction only) |
 | `--save_metrics` | off | Save metrics to a JSON file |
