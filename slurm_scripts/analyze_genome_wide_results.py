@@ -69,7 +69,7 @@ def collapse_overlapping_windows(predictions_df, window_size=2000, step_size=100
     
     return pd.DataFrame(segments)
 
-def apply_phage_clustering_filter(predictions_df, merge_gap=3000, min_cluster_size=1000, window_size=5):
+def apply_phage_clustering_filter(predictions_df, merge_gap=3000, min_cluster_size=1000, window_size=5, threshold=0.5):
     """
     Apply clustering filter to reduce false positives and merge nearby phage predictions
 
@@ -82,7 +82,12 @@ def apply_phage_clustering_filter(predictions_df, merge_gap=3000, min_cluster_si
     min_cluster_size : int
         Minimum total size (nt) for a phage cluster to be kept (default: 1000)
     window_size : int
-        Window size for bidirectional smoothing (default: 5)
+        Window size for bidirectional EWM smoothing (default: 5). Set to 0 to disable
+        smoothing entirely — clustering will operate directly on majority vote output.
+    threshold : float
+        Probability threshold for classifying as phage after smoothing (default: 0.5).
+        Only used when window_size > 0. Smoothed scores are compressed toward the mean
+        compared to raw model probabilities.
     verbose : bool
         Print detailed processing information (default: False)
 
@@ -97,8 +102,8 @@ def apply_phage_clustering_filter(predictions_df, merge_gap=3000, min_cluster_si
     # Sort by start position
     df = predictions_df.sort_values('start').copy()
 
-    # Apply bidirectional smoothing to predictions if we have scores
-    if 'score' in df.columns:
+    # Apply bidirectional smoothing to predictions if we have scores and window_size > 0
+    if 'score' in df.columns and window_size > 0:
         # Forward pass (left to right)
         forward_smooth = df['score'].ewm(span=window_size, adjust=False).mean()
 
@@ -108,8 +113,8 @@ def apply_phage_clustering_filter(predictions_df, merge_gap=3000, min_cluster_si
         # Average both directions for bidirectional smoothing
         df['smoothed_score'] = (forward_smooth + backward_smooth) / 2
 
-        # Update predictions based on smoothed scores (threshold 0.5)
-        df['prediction'] = (df['smoothed_score'] >= 0.5).astype(int)
+        # Update predictions based on smoothed scores
+        df['prediction'] = (df['smoothed_score'] >= threshold).astype(int)
 
     # Filter to only phage predictions
     phage_df = df[df['prediction'] == 1].copy()
@@ -220,6 +225,8 @@ def summarize_genome_predictions(directory_path, model_name, output_dir='.',
                                 merge_gap=3000,
                                 min_cluster_size=1000,
                                 window_size=5,
+                                threshold=0.5,
+                                cluster_threshold=None,
                                 verbose=False):
     """
     Read all JSON prediction files from a directory and summarize results.
@@ -245,6 +252,13 @@ def summarize_genome_predictions(directory_path, model_name, output_dir='.',
         Minimum cluster size (nt) to keep (default: 1000)
     window_size : int
         Window size for bidirectional smoothing (default: 5)
+    threshold : float
+        Probability threshold for initial re-binarization of raw model scores (default: 0.5)
+    cluster_threshold : float or None
+        Probability threshold for re-binarization after EWM smoothing in the clustering
+        step. If None, defaults to the same value as threshold. Smoothed scores are
+        compressed toward the mean, so the optimal value here is often different from
+        the initial threshold.
 
     Output files contain both RAW (unfiltered) and FILTERED metrics for comparison.
     - Aggregate metrics: calculated from summed TP/TN/FP/FN across all genomes
@@ -258,6 +272,10 @@ def summarize_genome_predictions(directory_path, model_name, output_dir='.',
         output_summary = f"{model_name}_summary.csv"
     if output_predictions is None:
         output_predictions = f"{model_name}_phage_predictions.csv"
+
+    # Default cluster_threshold to threshold if not specified
+    if cluster_threshold is None:
+        cluster_threshold = threshold
 
     # Add output directory to paths
     output_individual = os.path.join(output_dir, output_individual)
@@ -381,6 +399,9 @@ def summarize_genome_predictions(directory_path, model_name, output_dir='.',
                     if 'prob_1' in pred_df.columns:
                         pred_df = pred_df.rename(columns={'prob_1': 'score'})
 
+                    # Re-binarize predictions at the specified threshold
+                    pred_df['prediction'] = (pred_df['score'] >= threshold).astype(int)
+
                     # First, collapse overlapping windows with majority voting
                     collapsed_df = collapse_overlapping_windows(pred_df, window_size=2000, step_size=1000)
 
@@ -389,7 +410,8 @@ def summarize_genome_predictions(directory_path, model_name, output_dir='.',
                         collapsed_df,
                         merge_gap=merge_gap,
                         min_cluster_size=min_cluster_size,
-                        window_size=window_size
+                        window_size=window_size,
+                        threshold=cluster_threshold
                     )
 
                     phage_after = filtered_df['filtered_prediction'].sum() if 'filtered_prediction' in filtered_df.columns else 0
@@ -638,6 +660,68 @@ def summarize_genome_predictions(directory_path, model_name, output_dir='.',
 
     return df_individual, df_summary, df_predictions
 
+def print_threshold_comparison(all_summaries, labels):
+    """
+    Print a formatted comparison table of metrics across threshold configurations.
+
+    Parameters:
+    -----------
+    all_summaries : list of DataFrames
+        List of summary DataFrames, one per configuration
+    labels : list of str
+        Labels for each configuration (e.g., "t=0.5", "t=0.9,ct=0.3")
+    """
+    metrics = ['mcc', 'recall', 'precision', 'f1', 'fpr', 'fnr', 'accuracy']
+    # For these metrics, higher is better; for fpr/fnr, lower is better
+    higher_is_better = {'mcc', 'recall', 'precision', 'f1', 'accuracy', 'specificity'}
+
+    # Determine column width based on longest label
+    col_w = max(10, max(len(str(l)) for l in labels) + 2)
+
+    # Build rows: for each (type, method) combination, show metrics across configs
+    row_types = [
+        ('raw', 'aggregate (summed TP/TN/FP/FN)'),
+        ('raw', 'average (mean per-genome)'),
+        ('filtered', 'aggregate (summed TP/TN/FP/FN)'),
+        ('filtered', 'average (mean per-genome)'),
+    ]
+
+    for rtype, rmethod in row_types:
+        section_label = f"{rtype} / {rmethod.split('(')[0].strip()}"
+        print(f"\n{'#'*80}")
+        print(f"# {section_label}")
+        print(f"{'#'*80}")
+
+        # Header
+        thresh_headers = ''.join(f'{str(l):>{col_w}}' for l in labels)
+        print(f"{'Metric':<12}{thresh_headers}{'':>4}Best")
+        print('-' * (12 + col_w * len(labels) + 4 + col_w))
+
+        for metric in metrics:
+            values = []
+            for i, df_sum in enumerate(all_summaries):
+                row = df_sum[(df_sum['type'] == rtype) & (df_sum['method'] == rmethod)]
+                if len(row) > 0 and metric in row.columns:
+                    values.append(row[metric].iloc[0])
+                else:
+                    values.append(float('nan'))
+
+            # Find best config for this metric
+            valid = [(v, l) for v, l in zip(values, labels) if not (isinstance(v, float) and np.isnan(v))]
+            if valid:
+                if metric in higher_is_better:
+                    best_val, best_label = max(valid, key=lambda x: x[0])
+                else:
+                    best_val, best_label = min(valid, key=lambda x: x[0])
+            else:
+                best_label = '?'
+
+            val_str = ''.join(f'{v:>{col_w}.4f}' for v in values)
+            print(f"{metric:<12}{val_str}{'':>4}{best_label}")
+
+    print()
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -686,53 +770,176 @@ Examples:
     parser.add_argument('--min-cluster-size', type=int, default=1000,
                         help='Minimum cluster size (nt) to keep (default: 1000)')
     parser.add_argument('--window-size', type=int, default=5,
-                        help='Window size for bidirectional smoothing (default: 5)')
+                        help='Window size for bidirectional EWM smoothing (default: 5). '
+                             'Set to 0 to disable smoothing and cluster directly on majority vote output.')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Print detailed processing information for each genome')
+    parser.add_argument('--threshold', type=float, default=0.5,
+                        help='Probability threshold for initial re-binarization of raw scores (default: 0.5)')
+    parser.add_argument('--cluster-threshold', type=float, default=None,
+                        help='Probability threshold for re-binarization after EWM smoothing in clustering. '
+                             'If not set, defaults to --threshold. Smoothed scores are compressed toward the '
+                             'mean, so the optimal value here is often different from --threshold.')
+    parser.add_argument('--threshold-sweep', type=str, default=None,
+                        help='Comma-separated thresholds to sweep for initial re-binarization '
+                             '(e.g., "0.3,0.5,0.7,0.9,0.95,0.99"). --cluster-threshold is held fixed.')
+    parser.add_argument('--cluster-threshold-sweep', type=str, default=None,
+                        help='Comma-separated thresholds to sweep for clustering re-binarization '
+                             '(e.g., "0.3,0.5,0.7,0.9"). --threshold is held fixed. '
+                             'If both sweeps are given, all combinations are tested.')
+    parser.add_argument('--merge-gap-sweep', type=str, default=None,
+                        help='Comma-separated merge gap values to sweep '
+                             '(e.g., "1000,3000,5000,10000")')
+    parser.add_argument('--min-cluster-size-sweep', type=str, default=None,
+                        help='Comma-separated min cluster size values to sweep '
+                             '(e.g., "1000,3000,5000,10000")')
 
     args = parser.parse_args()
 
     # Handle output prefix if provided
     if args.output_prefix:
-        output_individual = f"{args.output_prefix}_individual.csv"
-        output_summary = f"{args.output_prefix}_summary.csv"
-        output_predictions = f"{args.output_prefix}_phage_predictions.csv"
+        base_prefix = args.output_prefix
     else:
-        output_individual = args.output_individual
-        output_summary = args.output_summary
-        output_predictions = args.output_predictions
+        base_prefix = args.model_name
 
-    # Run the analysis
-    df_individual, df_summary, df_predictions = summarize_genome_predictions(
-        directory_path=args.directory,
-        model_name=args.model_name,
-        output_dir=args.output_dir,
-        output_individual=output_individual,
-        output_summary=output_summary,
-        output_predictions=output_predictions,
-        merge_gap=args.merge_gap,
-        min_cluster_size=args.min_cluster_size,
-        window_size=args.window_size,
-        verbose=args.verbose
-    )
+    # Build sweep lists
+    has_sweep = (args.threshold_sweep or args.cluster_threshold_sweep
+                 or args.merge_gap_sweep or args.min_cluster_size_sweep)
 
-    if df_individual is not None and df_summary is not None:
-        # Display first few rows
-        print("\n" + "="*70)
-        print("INDIVIDUAL GENOME RESULTS (first 5):")
-        print("="*70)
-        # Show selected columns for readability
-        display_cols = ['genome', 'samples', 'raw_mcc', 'raw_recall', 'raw_fpr',
-                        'filt_mcc', 'filt_recall', 'filt_fpr', 'num_phage_regions']
-        print(df_individual[display_cols].head().to_string(index=False))
+    if has_sweep:
+        from itertools import product
 
-        print("\n" + "="*70)
-        print("SUMMARY METRICS:")
-        print("="*70)
-        print(df_summary.to_string(index=False))
+        # --- Sweep mode ---
+        # For each param: if sweep provided, use those values; otherwise use the single CLI value
+        thresh_list = ([float(t.strip()) for t in args.threshold_sweep.split(',')]
+                       if args.threshold_sweep else [args.threshold])
+        cluster_thresh_list = ([float(t.strip()) for t in args.cluster_threshold_sweep.split(',')]
+                               if args.cluster_threshold_sweep else [args.cluster_threshold])
+        merge_gap_list = ([int(t.strip()) for t in args.merge_gap_sweep.split(',')]
+                          if args.merge_gap_sweep else [args.merge_gap])
+        min_cluster_list = ([int(t.strip()) for t in args.min_cluster_size_sweep.split(',')]
+                            if args.min_cluster_size_sweep else [args.min_cluster_size])
 
-        if df_predictions is not None and len(df_predictions) > 0:
+        combos = list(product(thresh_list, cluster_thresh_list, merge_gap_list, min_cluster_list))
+        print(f"Sweep: {len(combos)} combinations to test")
+
+        # Track which params are actually being swept (more than 1 value)
+        swept = {
+            't': len(thresh_list) > 1,
+            'ct': len(cluster_thresh_list) > 1 or args.cluster_threshold_sweep is not None,
+            'mg': len(merge_gap_list) > 1,
+            'mcs': len(min_cluster_list) > 1,
+        }
+
+        all_summaries = []
+        sweep_labels = []
+
+        for thresh, ct, mg, mcs in combos:
+            # Build label showing only swept params (plus threshold always)
+            parts = [f"t={thresh}"]
+            if swept['ct'] and ct is not None:
+                parts.append(f"ct={ct}")
+            if swept['mg']:
+                parts.append(f"mg={mg}")
+            if swept['mcs']:
+                parts.append(f"mcs={mcs}")
+            label = ','.join(parts)
+
+            print(f"\n{'#'*70}")
+            print(f"# {label}")
+            print(f"{'#'*70}")
+
+            # Build per-combo output filenames
+            file_tag = f"_t{thresh}"
+            if ct is not None:
+                file_tag += f"_ct{ct}"
+            if swept['mg']:
+                file_tag += f"_mg{mg}"
+            if swept['mcs']:
+                file_tag += f"_mcs{mcs}"
+            output_individual = f"{base_prefix}{file_tag}_individual.csv"
+            output_summary = f"{base_prefix}{file_tag}_summary.csv"
+            output_predictions = f"{base_prefix}{file_tag}_phage_predictions.csv"
+
+            df_ind, df_sum, df_pred = summarize_genome_predictions(
+                directory_path=args.directory,
+                model_name=args.model_name,
+                output_dir=args.output_dir,
+                output_individual=output_individual,
+                output_summary=output_summary,
+                output_predictions=output_predictions,
+                merge_gap=mg,
+                min_cluster_size=mcs,
+                window_size=args.window_size,
+                threshold=thresh,
+                cluster_threshold=ct,
+                verbose=args.verbose
+            )
+
+            if df_sum is not None:
+                df_sum['threshold'] = thresh
+                df_sum['cluster_threshold'] = ct if ct is not None else thresh
+                df_sum['merge_gap'] = mg
+                df_sum['min_cluster_size'] = mcs
+                all_summaries.append(df_sum)
+                sweep_labels.append(label)
+
+        # Print comparison table across all combos
+        if all_summaries:
+            print(f"\n{'='*80}")
+            print("PARAMETER SWEEP COMPARISON")
+            print(f"{'='*80}")
+            print_threshold_comparison(all_summaries, sweep_labels)
+
+            # Save combined comparison CSV
+            combined = pd.concat(all_summaries, ignore_index=True)
+            sweep_path = os.path.join(args.output_dir, f"{base_prefix}_sweep.csv")
+            combined.to_csv(sweep_path, index=False)
+            print(f"Combined sweep results saved to {sweep_path}")
+
+    else:
+        # --- Single threshold mode ---
+        if args.output_prefix:
+            output_individual = f"{args.output_prefix}_individual.csv"
+            output_summary = f"{args.output_prefix}_summary.csv"
+            output_predictions = f"{args.output_prefix}_phage_predictions.csv"
+        else:
+            output_individual = args.output_individual
+            output_summary = args.output_summary
+            output_predictions = args.output_predictions
+
+        df_individual, df_summary, df_predictions = summarize_genome_predictions(
+            directory_path=args.directory,
+            model_name=args.model_name,
+            output_dir=args.output_dir,
+            output_individual=output_individual,
+            output_summary=output_summary,
+            output_predictions=output_predictions,
+            merge_gap=args.merge_gap,
+            min_cluster_size=args.min_cluster_size,
+            window_size=args.window_size,
+            threshold=args.threshold,
+            cluster_threshold=args.cluster_threshold,
+            verbose=args.verbose
+        )
+
+        if df_individual is not None and df_summary is not None:
+            # Display first few rows
             print("\n" + "="*70)
-            print(f"PHAGE PREDICTIONS (first 10 of {len(df_predictions)}):")
+            print("INDIVIDUAL GENOME RESULTS (first 5):")
             print("="*70)
-            print(df_predictions.head(10).to_string(index=False))
+            # Show selected columns for readability
+            display_cols = ['genome', 'samples', 'raw_mcc', 'raw_recall', 'raw_fpr',
+                            'filt_mcc', 'filt_recall', 'filt_fpr', 'num_phage_regions']
+            print(df_individual[display_cols].head().to_string(index=False))
+
+            print("\n" + "="*70)
+            print("SUMMARY METRICS:")
+            print("="*70)
+            print(df_summary.to_string(index=False))
+
+            if df_predictions is not None and len(df_predictions) > 0:
+                print("\n" + "="*70)
+                print(f"PHAGE PREDICTIONS (first 10 of {len(df_predictions)}):")
+                print("="*70)
+                print(df_predictions.head(10).to_string(index=False))
