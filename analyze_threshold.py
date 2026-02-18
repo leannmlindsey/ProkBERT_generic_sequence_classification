@@ -433,14 +433,14 @@ def main():
     df = pd.read_csv(args.predictions_file)
     
     # Check required columns
-    required_cols = ['true_label', 'prob_class_1']
+    required_cols = ['label', 'prob_1']
     if not all(col in df.columns for col in required_cols):
         print(f"Error: Required columns {required_cols} not found in file")
         print(f"Available columns: {df.columns.tolist()}")
         sys.exit(1)
     
-    y_true = df['true_label'].values
-    y_prob = df['prob_class_1'].values
+    y_true = df['label'].values
+    y_prob = df['prob_1'].values
     
     # Set output directory
     if args.output_dir is None:

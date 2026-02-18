@@ -32,15 +32,15 @@ def evaluate_at_threshold(df, threshold, verbose=True):
     Evaluate predictions at a specific threshold.
     
     Args:
-        df: DataFrame with true_label and prob_class_1 columns
+        df: DataFrame with label and prob_1 columns
         threshold: Classification threshold
         verbose: Print detailed results
     
     Returns:
         dict: Dictionary of metrics and predictions
     """
-    y_true = df['true_label'].values
-    y_prob = df['prob_class_1'].values
+    y_true = df['label'].values
+    y_prob = df['prob_1'].values
     
     # Apply threshold
     y_pred = (y_prob >= threshold).astype(int)
@@ -129,15 +129,15 @@ def save_new_predictions(df, predictions, threshold, output_path):
     """
     # Create new dataframe with updated predictions
     new_df = df.copy()
-    new_df['predicted_label_original'] = new_df['predicted_label'] if 'predicted_label' in new_df.columns else (new_df['prob_class_1'] >= 0.5).astype(int)
-    new_df['predicted_label'] = predictions
+    new_df['predicted_label_original'] = new_df['pred_label'] if 'pred_label' in new_df.columns else (new_df['prob_1'] >= 0.5).astype(int)
+    new_df['pred_label'] = predictions
     new_df['threshold_used'] = threshold
-    new_df['correct'] = (predictions == df['true_label']).astype(int)
+    new_df['correct'] = (predictions == df['label']).astype(int)
     
     # Reorder columns for clarity
     cols = ['segment_id'] if 'segment_id' in new_df.columns else []
-    cols.extend(['true_label', 'predicted_label', 'predicted_label_original', 
-                 'prob_class_0', 'prob_class_1', 'threshold_used', 'correct'])
+    cols.extend(['label', 'pred_label', 'predicted_label_original',
+                 'prob_class_0', 'prob_1', 'threshold_used', 'correct'])
     
     # Add any additional columns
     for col in new_df.columns:
@@ -251,7 +251,7 @@ def main():
     df = pd.read_csv(args.predictions_file)
     
     # Check required columns
-    required_cols = ['true_label', 'prob_class_1']
+    required_cols = ['label', 'prob_1']
     if not all(col in df.columns for col in required_cols):
         print(f"Error: Required columns {required_cols} not found")
         sys.exit(1)

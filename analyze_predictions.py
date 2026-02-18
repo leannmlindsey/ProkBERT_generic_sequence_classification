@@ -67,7 +67,7 @@ def load_prediction_files(input_dir):
         df = pd.read_csv(csv_file)
         
         # Check required columns
-        required_cols = ['true_label', 'predicted_label']
+        required_cols = ['label', 'pred_label']
         if not all(col in df.columns for col in required_cols):
             print(f"  ⚠️  Skipping {csv_file.name}: missing required columns")
             continue
@@ -91,8 +91,8 @@ def calculate_metrics(df, software_name):
     """
     metrics = {'Software': software_name}
     
-    y_true = df['true_label'].values
-    y_pred = df['predicted_label'].values
+    y_true = df['label'].values
+    y_pred = df['pred_label'].values
     
     # Basic metrics
     metrics['Accuracy'] = accuracy_score(y_true, y_pred)
@@ -112,10 +112,10 @@ def calculate_metrics(df, software_name):
         metrics['FN'] = fn
     
     # AUC if probabilities are available
-    if 'prob_class_1' in df.columns:
+    if 'prob_1' in df.columns:
         try:
-            metrics['AUC-ROC'] = roc_auc_score(y_true, df['prob_class_1'].values)
-            metrics['AUC-PR'] = average_precision_score(y_true, df['prob_class_1'].values)
+            metrics['AUC-ROC'] = roc_auc_score(y_true, df['prob_1'].values)
+            metrics['AUC-PR'] = average_precision_score(y_true, df['prob_1'].values)
         except:
             metrics['AUC-ROC'] = np.nan
             metrics['AUC-PR'] = np.nan
@@ -271,8 +271,8 @@ def analyze_by_taxonomy(prediction_files, taxonomy_df, tax_level='genus', output
             if len(taxon_df) < 5:  # Skip taxa with too few samples
                 continue
             
-            y_true = taxon_df['true_label'].values
-            y_pred = taxon_df['predicted_label'].values
+            y_true = taxon_df['label'].values
+            y_pred = taxon_df['pred_label'].values
             
             tax_metrics = {
                 'Software': software_name,

@@ -238,16 +238,19 @@ def save_results(predictions, probabilities, labels, segment_ids, output_path, m
     """
     results = pd.DataFrame({
         'segment_id': segment_ids,
-        'predicted_label': predictions,
-        'prob_class_0': probabilities[:, 0],
-        'prob_class_1': probabilities[:, 1]
     })
-    
+
     if labels is not None:
         # Convert to numpy if it's a tensor
         if torch.is_tensor(labels):
             labels = labels.cpu().numpy()
-        results['true_label'] = labels
+        results['label'] = labels
+
+    results['prob_class_0'] = probabilities[:, 0]
+    results['prob_1'] = probabilities[:, 1]
+    results['pred_label'] = predictions
+
+    if labels is not None:
         results['correct'] = (predictions == labels).astype(int)
     
     # Merge with metadata if provided
