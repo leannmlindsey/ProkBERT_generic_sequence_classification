@@ -45,7 +45,16 @@ RENAME_MAP = {
 
 def fix_csv(filepath, dry_run=False):
     """Fix column names in a single prediction CSV. Returns True if file was fixed."""
-    df = pd.read_csv(filepath)
+    try:
+        df = pd.read_csv(filepath)
+    except (pd.errors.EmptyDataError, pd.errors.ParserError) as e:
+        print(f"  SKIP (cannot read: {e}): {filepath}")
+        return False
+
+    if df.empty:
+        print(f"  SKIP (empty file): {filepath}")
+        return False
+
     cols = list(df.columns)
 
     # Check if this is a prediction CSV at all
